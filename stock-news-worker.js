@@ -16,7 +16,10 @@ const DEFAULT_TICKERS = [
   "AMD",
   "NFLX",
   "SPY",
-  "QQQ"
+  "QQQ",
+  "MU",
+  "INTC",
+  "SNDK"
 ];
 
 const DEFAULT_ALPHA_TOPICS = [
