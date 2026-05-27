@@ -1,0 +1,17 @@
+{
+  "name": "workflowiyom6d-yo-stock-news",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node stock-news-worker.js",
+    "start:env": "node --env-file=.env stock-news-worker.js",
+    "bot": "node stock-news-worker.js --bot",
+    "bot:env": "node --env-file=.env stock-news-worker.js --bot",
+    "test:telegram": "node stock-news-worker.js --test-telegram",
+    "test:telegram:env": "node --env-file=.env stock-news-worker.js --test-telegram"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
