@@ -1,4 +1,5 @@
 const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
+const ALPHA_VANTAGE_API_KEY = process.env.ALPHA_VANTAGE_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
@@ -15,6 +16,15 @@ const DEFAULT_TICKERS = [
   "NFLX",
   "SPY",
   "QQQ"
+];
+
+const DEFAULT_ALPHA_TOPICS = [
+  "financial_markets",
+  "earnings",
+  "economy_monetary",
+  "economy_macro",
+  "technology",
+  "energy_transportation"
 ];
 
 const IMPORTANT_TERMS = [
@@ -98,6 +108,12 @@ function requireEnv(name, value) {
   }
 }
 
+function requireAtLeastOneNewsApi() {
+  if (!FINNHUB_API_KEY && !ALPHA_VANTAGE_API_KEY) {
+    throw new Error("Missing news API key: set FINNHUB_API_KEY or ALPHA_VANTAGE_API_KEY");
+  }
+}
+
 function formatDate(date) {
   return date.toISOString().slice(0, 10);
 }
@@ -116,6 +132,13 @@ function getTickerList() {
     .filter(Boolean);
 }
 
+function getAlphaTopics() {
+  return (process.env.ALPHA_TOPICS || DEFAULT_ALPHA_TOPICS.join(","))
+    .split(",")
+    .map((topic) => topic.trim())
+    .filter(Boolean);
+}
+
 function getDefaultChatIds() {
   return TELEGRAM_CHAT_ID.split(",")
     .map((chatId) => chatId.trim())
@@ -124,6 +147,20 @@ function getDefaultChatIds() {
 
 function normalizeHeadline(headline) {
   return headline.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function parseAlphaTime(timePublished) {
+  if (!timePublished || timePublished.length < 15) {
+    return Math.floor(Date.now() / 1000);
+  }
+
+  const year = timePublished.slice(0, 4);
+  const month = timePublished.slice(4, 6);
+  const day = timePublished.slice(6, 8);
+  const hour = timePublished.slice(9, 11);
+  const minute = timePublished.slice(11, 13);
+  const second = timePublished.slice(13, 15);
+  return Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`) / 1000;
 }
 
 function scoreNews(item) {
@@ -138,6 +175,11 @@ function scoreNews(item) {
   score += headline.length >= 40 ? 1 : 0;
   score += ageHours <= 6 ? 4 : ageHours <= 24 ? 2 : 0;
   score += item.related?.includes(item.ticker) ? 2 : 0;
+  score += item.apiSource === "alpha_vantage" ? 1 : 0;
+
+  if (item.sentimentScore) {
+    score += Math.min(3, Math.abs(Number(item.sentimentScore)) * 5);
+  }
 
   return score;
 }
@@ -156,23 +198,82 @@ async function fetchFinnhubCompanyNews(ticker, from, to) {
   }
 
   const data = await response.json();
-  return data.map((item) => ({ ...item, ticker }));
+  return data.map((item) => ({ ...item, ticker, apiSource: "finnhub" }));
 }
 
-async function fetchAllNews() {
+async function fetchFinnhubNews() {
+  if (!FINNHUB_API_KEY) return [];
+
   const to = new Date();
   const from = new Date(to);
   from.setDate(to.getDate() - 1);
 
-  const tickers = getTickerList();
-  const jobs = tickers.map((ticker) =>
+  const jobs = getTickerList().map((ticker) =>
     fetchFinnhubCompanyNews(ticker, formatDate(from), formatDate(to))
   );
 
   const results = await Promise.allSettled(jobs);
   const failed = results.filter((result) => result.status === "rejected");
   if (failed.length) {
-    console.warn(`Skipped ${failed.length} ticker request(s).`);
+    console.warn(`Skipped ${failed.length} Finnhub ticker request(s).`);
+    for (const result of failed) console.warn(result.reason.message);
+  }
+
+  return results
+    .filter((result) => result.status === "fulfilled")
+    .flatMap((result) => result.value);
+}
+
+async function fetchAlphaVantageNews() {
+  if (!ALPHA_VANTAGE_API_KEY) return [];
+
+  const url = new URL("https://www.alphavantage.co/query");
+  url.searchParams.set("function", "NEWS_SENTIMENT");
+  url.searchParams.set("tickers", getTickerList().join(","));
+  url.searchParams.set("topics", getAlphaTopics().join(","));
+  url.searchParams.set("sort", "LATEST");
+  url.searchParams.set("limit", String(Number(process.env.ALPHA_NEWS_LIMIT || 50)));
+  url.searchParams.set("apikey", ALPHA_VANTAGE_API_KEY);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Alpha Vantage failed: ${response.status} ${body}`);
+  }
+
+  const data = await response.json();
+  if (data.Note || data.Information) {
+    console.warn(`Alpha Vantage notice: ${data.Note || data.Information}`);
+    return [];
+  }
+
+  return (data.feed || []).map((item) => {
+    const relatedTickers = (item.ticker_sentiment || [])
+      .map((tickerItem) => tickerItem.ticker)
+      .filter(Boolean);
+
+    return {
+      headline: item.title,
+      summary: item.summary,
+      url: item.url,
+      source: item.source,
+      datetime: parseAlphaTime(item.time_published),
+      ticker: relatedTickers[0] || "MARKET",
+      related: relatedTickers.join(","),
+      sentimentScore: item.overall_sentiment_score,
+      sentimentLabel: item.overall_sentiment_label,
+      apiSource: "alpha_vantage"
+    };
+  });
+}
+
+async function fetchAllNews() {
+  requireAtLeastOneNewsApi();
+
+  const results = await Promise.allSettled([fetchFinnhubNews(), fetchAlphaVantageNews()]);
+  const failed = results.filter((result) => result.status === "rejected");
+  if (failed.length) {
+    console.warn(`Skipped ${failed.length} news source(s).`);
     for (const result of failed) console.warn(result.reason.message);
   }
 
@@ -212,7 +313,14 @@ function buildTelegramMessage(newsItems) {
     "",
     ...newsItems.flatMap((item, index) => [
       `${index + 1}. ${item.ticker}: ${item.headline}`,
-      `แหล่งข่าว: ${item.source || "ไม่ระบุ"} | คะแนน: ${item.score}`,
+      [
+        `แหล่งข่าว: ${item.source || "ไม่ระบุ"}`,
+        `API: ${item.apiSource || "unknown"}`,
+        item.sentimentLabel ? `Sentiment: ${item.sentimentLabel}` : null,
+        `คะแนน: ${Math.round(item.score * 10) / 10}`
+      ]
+        .filter(Boolean)
+        .join(" | "),
       item.url,
       ""
     ])
@@ -233,8 +341,6 @@ function buildHelpMessage() {
 }
 
 async function buildLatestNewsMessage() {
-  requireEnv("FINNHUB_API_KEY", FINNHUB_API_KEY);
-
   const news = await fetchAllNews();
   const topNews = pickTopNews(news);
   return buildTelegramMessage(topNews);
