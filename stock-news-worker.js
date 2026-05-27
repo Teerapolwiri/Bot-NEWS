@@ -1,5 +1,6 @@
 const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
 const ALPHA_VANTAGE_API_KEY = process.env.ALPHA_VANTAGE_API_KEY;
+const NEWSAPI_KEY = process.env.NEWSAPI_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
@@ -109,8 +110,10 @@ function requireEnv(name, value) {
 }
 
 function requireAtLeastOneNewsApi() {
-  if (!FINNHUB_API_KEY && !ALPHA_VANTAGE_API_KEY) {
-    throw new Error("Missing news API key: set FINNHUB_API_KEY or ALPHA_VANTAGE_API_KEY");
+  if (!FINNHUB_API_KEY && !ALPHA_VANTAGE_API_KEY && !NEWSAPI_KEY) {
+    throw new Error(
+      "Missing news API key: set FINNHUB_API_KEY, ALPHA_VANTAGE_API_KEY, or NEWSAPI_KEY"
+    );
   }
 }
 
@@ -137,6 +140,24 @@ function getAlphaTopics() {
     .split(",")
     .map((topic) => topic.trim())
     .filter(Boolean);
+}
+
+function getNewsApiQuery() {
+  const configuredQuery = process.env.NEWSAPI_QUERY;
+  if (configuredQuery) return configuredQuery;
+
+  return [
+    "stock market",
+    "earnings",
+    "federal reserve",
+    "inflation",
+    "semiconductor",
+    "artificial intelligence",
+    "energy",
+    "oil",
+    "electricity",
+    "memory chip"
+  ].join(" OR ");
 }
 
 function getDefaultChatIds() {
@@ -267,10 +288,52 @@ async function fetchAlphaVantageNews() {
   });
 }
 
+async function fetchNewsApiNews() {
+  if (!NEWSAPI_KEY) return [];
+
+  const from = new Date();
+  from.setDate(from.getDate() - 1);
+
+  const url = new URL("https://newsapi.org/v2/everything");
+  url.searchParams.set("q", getNewsApiQuery());
+  url.searchParams.set("from", formatDate(from));
+  url.searchParams.set("language", process.env.NEWSAPI_LANGUAGE || "en");
+  url.searchParams.set("sortBy", process.env.NEWSAPI_SORT_BY || "publishedAt");
+  url.searchParams.set("pageSize", String(Number(process.env.NEWSAPI_LIMIT || 50)));
+
+  const response = await fetch(url, {
+    headers: { "X-Api-Key": NEWSAPI_KEY }
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`NewsAPI failed: ${response.status} ${body}`);
+  }
+
+  const data = await response.json();
+  if (data.status === "error") {
+    throw new Error(`NewsAPI failed: ${data.code} ${data.message}`);
+  }
+
+  return (data.articles || []).map((item) => ({
+    headline: item.title,
+    summary: item.description || item.content || "",
+    url: item.url,
+    source: item.source?.name,
+    datetime: item.publishedAt ? Date.parse(item.publishedAt) / 1000 : Date.now() / 1000,
+    ticker: "MARKET",
+    related: "",
+    apiSource: "newsapi"
+  }));
+}
+
 async function fetchAllNews() {
   requireAtLeastOneNewsApi();
 
-  const results = await Promise.allSettled([fetchFinnhubNews(), fetchAlphaVantageNews()]);
+  const results = await Promise.allSettled([
+    fetchFinnhubNews(),
+    fetchAlphaVantageNews(),
+    fetchNewsApiNews()
+  ]);
   const failed = results.filter((result) => result.status === "rejected");
   if (failed.length) {
     console.warn(`Skipped ${failed.length} news source(s).`);

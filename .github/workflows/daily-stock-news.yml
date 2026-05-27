@@ -18,9 +18,14 @@ jobs:
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NEWS_TICKERS: AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA,JPM,AMD,NFLX,SPY,QQQ
           NEWS_LIMIT: 7
           ALPHA_TOPICS: financial_markets,earnings,economy_monetary,economy_macro,technology,energy_transportation
           ALPHA_NEWS_LIMIT: 50
+          NEWSAPI_QUERY: stock market OR earnings OR federal reserve OR inflation OR semiconductor OR artificial intelligence OR energy OR oil OR electricity OR memory chip
+          NEWSAPI_LANGUAGE: en
+          NEWSAPI_SORT_BY: publishedAt
+          NEWSAPI_LIMIT: 50
