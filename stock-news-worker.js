@@ -116,6 +116,12 @@ function getTickerList() {
     .filter(Boolean);
 }
 
+function getDefaultChatIds() {
+  return TELEGRAM_CHAT_ID.split(",")
+    .map((chatId) => chatId.trim())
+    .filter(Boolean);
+}
+
 function normalizeHeadline(headline) {
   return headline.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -234,7 +240,7 @@ async function buildLatestNewsMessage() {
   return buildTelegramMessage(topNews);
 }
 
-async function sendTelegramMessage(text, chatId = TELEGRAM_CHAT_ID) {
+async function sendTelegramMessageToChat(text, chatId) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   const response = await fetch(url, {
     method: "POST",
@@ -249,6 +255,22 @@ async function sendTelegramMessage(text, chatId = TELEGRAM_CHAT_ID) {
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`Telegram failed: ${response.status} ${body}`);
+  }
+}
+
+async function sendTelegramMessage(text, chatId) {
+  const chatIds = chatId ? [chatId] : getDefaultChatIds();
+  const results = await Promise.allSettled(
+    chatIds.map((targetChatId) => sendTelegramMessageToChat(text, targetChatId))
+  );
+  const failed = results.filter((result) => result.status === "rejected");
+
+  if (failed.length) {
+    throw new Error(
+      `Telegram failed for ${failed.length}/${chatIds.length} chat(s): ${failed
+        .map((result) => result.reason.message)
+        .join("; ")}`
+    );
   }
 }
 
