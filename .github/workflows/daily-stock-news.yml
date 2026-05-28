@@ -2,8 +2,9 @@ name: Daily Stock News
 
 on:
   schedule:
-    - cron: "0 1 * * *"
-    - cron: "0 11 * * *"
+    - cron: "50 23 * * *"
+    - cron: "45 6 * * *"
+    - cron: "30 12 * * *"
   workflow_dispatch:
 
 jobs:
